@@ -74,7 +74,28 @@ class ZergAgent(base_agent.BaseAgent):
     return actions.FUNCTIONS.Build_SpawningPool_screen("now", (x, y))
 
   ########################
+  ###     Attaques     ###
+  ########################
+  def attack_zerglings(self, obs):
+    if self.unit_type_is_selected(obs, units.Zerg.Zergling):
+      if self.can_do(obs, actions.FUNCTIONS.Attack_minimap.id):
+        return actions.FUNCTIONS.Attack_minimap("now", self.attack_coordinates)
+    if self.can_do(obs, actions.FUNCTIONS.select_army.id):
+      return actions.FUNCTIONS.select_army("select")
 
+  ########################
+  ###       Armée      ###
+  ########################
+  def train_Zergling(self):
+    return actions.FUNCTIONS.Train_Zergling_quick("now")
+
+  def train_Overlord(self):
+    return actions.FUNCTIONS.Train_Overlord_quick("now")
+
+
+  ########################
+  ###    Procédure     ###
+  ########################
   def step(self, obs):
     super(ZergAgent, self).step(obs)
     
@@ -89,16 +110,12 @@ class ZergAgent(base_agent.BaseAgent):
       else:
         self.attack_coordinates = (12, 16)
 
+    #Attaque zerglings simple
     zerglings = self.get_units_by_type(obs, units.Zerg.Zergling)
-    if len(zerglings) >= 10:
-      if self.unit_type_is_selected(obs, units.Zerg.Zergling):
-        if self.can_do(obs, actions.FUNCTIONS.Attack_minimap.id):
-          return actions.FUNCTIONS.Attack_minimap("now",
-                                                  self.attack_coordinates)
+    if len(zerglings) >= 20:
+      return self.attack_zerglings(obs)
 
-      if self.can_do(obs, actions.FUNCTIONS.select_army.id):
-        return actions.FUNCTIONS.select_army("select")
-
+    #Création SpawningPools avec drone
     spawning_pools = self.get_units_by_type(obs, units.Zerg.SpawningPool)
     if len(spawning_pools) == 0:
       if self.unit_type_is_selected(obs, units.Zerg.Drone):
@@ -108,15 +125,15 @@ class ZergAgent(base_agent.BaseAgent):
       if len(drones) > 0:
         return self.get_unit(drones)
     
+    #Création zerglings & overlord
     if self.unit_type_is_selected(obs, units.Zerg.Larva):
       free_supply = (obs.observation.player.food_cap -
                      obs.observation.player.food_used)
       if free_supply == 0:
-        if self.can_do(obs, actions.FUNCTIONS.Train_Overlord_quick.id):
-          return actions.FUNCTIONS.Train_Overlord_quick("now")
-
-      if self.can_do(obs, actions.FUNCTIONS.Train_Zergling_quick.id):
-        return actions.FUNCTIONS.Train_Zergling_quick("now")
+        if self.can_do(obs, actions.FUNCTIONS.Train_Overlord_quick.id): #Overlord
+          return self.train_Overlord()
+      if self.can_do(obs, actions.FUNCTIONS.Train_Zergling_quick.id):   #Zerglings
+        return self.train_Zergling()
     
     larvas = self.get_units_by_type(obs, units.Zerg.Larva)
     if len(larvas) > 0:
