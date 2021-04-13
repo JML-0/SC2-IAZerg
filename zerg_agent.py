@@ -96,7 +96,7 @@ class ZergAgent(base_agent.BaseAgent):
   ########################
   ###    Procédure     ###
   ########################
-  def step(self, obs):
+  def step(self, obs, fsm):
     super(ZergAgent, self).step(obs)
     
     if obs.first():
@@ -110,20 +110,40 @@ class ZergAgent(base_agent.BaseAgent):
       else:
         self.attack_coordinates = (12, 16)
 
+    #----
+    # S'il n'y a pas de spawning pool
+    #----
+    if fsm.current == "base" and len(self.get_units_by_type(obs, units.Zerg.SpawningPool)) == 0:
+      fsm.select_spawning_pool()
+      return self.get_unit(self.get_units_by_type(obs, units.Zerg.Drone))
+
+    if fsm.current == "spawning_pool_select_drone":
+        if self.can_do(obs, actions.FUNCTIONS.Build_SpawningPool_screen.id):
+          print(fsm.current)
+          fsm.create_spawning_pool()
+          print(fsm.current)
+          return self.build_SpawningPool()
+        else:
+          fsm.create_spawning_pool() #S'il ne peut pas faire l'action, alors dire quand même à l'automate de passer à l'état suivant pour retourner à l'état de base
+
+    #----
+    # S'il n'y a que un Overlord dans le terrain
+    #----
+
     #Attaque zerglings simple
     zerglings = self.get_units_by_type(obs, units.Zerg.Zergling)
     if len(zerglings) >= 20:
       return self.attack_zerglings(obs)
 
     #Création SpawningPools avec drone
-    spawning_pools = self.get_units_by_type(obs, units.Zerg.SpawningPool)
-    if len(spawning_pools) == 0:
-      if self.unit_type_is_selected(obs, units.Zerg.Drone):
-        if self.can_do(obs, actions.FUNCTIONS.Build_SpawningPool_screen.id):
-          return self.build_SpawningPool()
-      drones = self.get_units_by_type(obs, units.Zerg.Drone)
-      if len(drones) > 0:
-        return self.get_unit(drones)
+    #spawning_pools = self.get_units_by_type(obs, units.Zerg.SpawningPool)
+    #if len(spawning_pools) == 0:
+    #  if self.unit_type_is_selected(obs, units.Zerg.Drone):
+    #    if self.can_do(obs, actions.FUNCTIONS.Build_SpawningPool_screen.id):
+    #      return self.build_SpawningPool()
+    #  drones = self.get_units_by_type(obs, units.Zerg.Drone)
+    #  if len(drones) > 0:
+    #    return self.get_unit(drones)
     
     #Création zerglings & overlord
     if self.unit_type_is_selected(obs, units.Zerg.Larva):
@@ -157,13 +177,19 @@ def main(unused_argv):
           game_steps_per_episode=0,
           visualize=True) as env:
           
+        fsm = Fysom({'initial': {'state': 'base', 'event': 'init'},
+              'events': [
+                  {'name': 'select_spawning_pool', 'src': 'base', 'dst': 'spawning_pool_select_drone'},
+                  {'name': 'create_spawning_pool', 'src': 'spawning_pool_select_drone', 'dst': 'base'}]
+              })
+        
         agent.setup(env.observation_spec(), env.action_spec())
         
         timesteps = env.reset()
         agent.reset()
         
         while True:
-          step_actions = [agent.step(timesteps[0])]
+          step_actions = [agent.step(timesteps[0], fsm)]
           if timesteps[0].last():
             break
           timesteps = env.step(step_actions)
