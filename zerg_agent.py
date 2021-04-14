@@ -113,19 +113,22 @@ class ZergAgent(base_agent.BaseAgent):
     #----
     # S'il n'y a pas de spawning pool
     #----
-    if fsm.current == "base" and len(self.get_units_by_type(obs, units.Zerg.SpawningPool)) == 0:
-      fsm.select_spawning_pool()
-      return self.get_unit(self.get_units_by_type(obs, units.Zerg.Drone))
+    spawning_pools = self.get_units_by_type(obs, units.Zerg.SpawningPool)
+    if fsm.current == "base":
+      if len(spawning_pools) == 0:
+        fsm.select_spawning_pool()
 
+    drones = self.get_units_by_type(obs, units.Zerg.Drone)
     if fsm.current == "spawning_pool_select_drone":
+      if self.unit_type_is_selected(obs, units.Zerg.Drone):
         if self.can_do(obs, actions.FUNCTIONS.Build_SpawningPool_screen.id):
-          print(fsm.current)
           fsm.create_spawning_pool()
-          print(fsm.current)
           return self.build_SpawningPool()
         else:
-          fsm.create_spawning_pool() #S'il ne peut pas faire l'action, alors dire quand même à l'automate de passer à l'état suivant pour retourner à l'état de base
+          fsm.init()
 
+      if len(drones) > 0:
+        return self.get_unit(drones)
     #----
     # S'il n'y a que un Overlord dans le terrain
     #----
@@ -180,7 +183,8 @@ def main(unused_argv):
         fsm = Fysom({'initial': {'state': 'base', 'event': 'init'},
               'events': [
                   {'name': 'select_spawning_pool', 'src': 'base', 'dst': 'spawning_pool_select_drone'},
-                  {'name': 'create_spawning_pool', 'src': 'spawning_pool_select_drone', 'dst': 'base'}]
+                  {'name': 'create_spawning_pool', 'src': 'spawning_pool_select_drone', 'dst': 'base'},
+                  {'name': 'init', 'dst': 'base'}]
               })
         
         agent.setup(env.observation_spec(), env.action_spec())
