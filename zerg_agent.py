@@ -5,39 +5,26 @@ from absl import app
 from fysom import Fysom
 import random
 
-# def onpanic(e):
-#     print ('panic! ' + e.msg)
-# def oncalm(e):
-#     print ('thanks to ' + e.msg + ' done by ' + e.args[0])
-# def ongreen(e):
-#     print ('green')
-# def onyellow(e):
-#     print ('yellow')
-# def onred(e):
-#     print ('red')
-# fsm = Fysom({'initial': 'green',
-#              'events': [
-#                  {'name': 'warn', 'src': 'green', 'dst': 'yellow'},
-#                  {'name': 'panic', 'src': 'yellow', 'dst': 'red'},
-#                  {'name': 'panic', 'src': 'green', 'dst': 'red'},
-#                  {'name': 'calm', 'src': 'red', 'dst': 'yellow'},
-#                  {'name': 'clear', 'src': 'yellow', 'dst': 'green'}],
-#              'callbacks': {
-#                  'onpanic': onpanic,
-#                  'oncalm': oncalm,
-#                  'ongreen': ongreen,
-#                  'onyellow': onyellow,
-#                  'onred': onred }})
 
-# fsm.panic(msg='killer bees')
-# fsm.calm('bob', msg='sedatives in the honey pots')
+#Actions
+_BUILD_SPAWNINGPOOL = actions.FUNCTIONS.Build_SpawningPool_screen.id
+_BUILD_EXTRACTOR = actions.FUNCTIONS.Build_Extractor_screen.id
+_TRAIN_OVERLORD = actions.FUNCTIONS.Train_Overlord_quick.id
+_TRAIN_ZERGLING = actions.FUNCTIONS.Train_Zergling_quick.id
+_SELECT_ARMY = actions.FUNCTIONS.select_army.id
+_ATTACK_MINIMAP = actions.FUNCTIONS.Attack_minimap.id
+_SELECT_IDLE_WORKER = actions.FUNCTIONS.select_idle_worker.id
+_HARVEST_GATHER_SCREEN = actions.FUNCTIONS.Harvest_Gather_screen.id 
 
-# quit()
+#Features
+_UNIT_TYPE = features.SCREEN_FEATURES.unit_type.index
+_DRONE_GAS = 0
+_EXTRACTORS = []
 
 class ZergAgent(base_agent.BaseAgent):
+  drone_selected = False
   def __init__(self):
     super(ZergAgent, self).__init__()
-    
     self.attack_coordinates = None
 
   ########################
@@ -60,7 +47,15 @@ class ZergAgent(base_agent.BaseAgent):
 
   def get_unit(self, units):
     unit = random.choice(units)
-    return actions.FUNCTIONS.select_point("select_all_type", (unit.x, unit.y)) 
+    return actions.FUNCTIONS.select_point("select", (unit.x, unit.y))
+  
+  def get_units(self, units, n):
+    units = []
+    i = 0
+    while i < n:
+      unit = random.choice(units)
+      units.append((unit.x, unit.y))
+    return units
   
   def can_do(self, obs, action):
     return action in obs.observation.available_actions
@@ -73,14 +68,19 @@ class ZergAgent(base_agent.BaseAgent):
     y = random.randint(0, 83)
     return actions.FUNCTIONS.Build_SpawningPool_screen("now", (x, y))
 
+  def build_Extractor(self):
+    x = random.randint(0, 83)
+    y = random.randint(0, 83)
+    return actions.FUNCTIONS.Build_Extractor_screen("now", (x, y))
+
   ########################
   ###     Attaques     ###
   ########################
   def attack_zerglings(self, obs):
     if self.unit_type_is_selected(obs, units.Zerg.Zergling):
-      if self.can_do(obs, actions.FUNCTIONS.Attack_minimap.id):
+      if self.can_do(obs, _ATTACK_MINIMAP):
         return actions.FUNCTIONS.Attack_minimap("now", self.attack_coordinates)
-    if self.can_do(obs, actions.FUNCTIONS.select_army.id):
+    if self.can_do(obs, _SELECT_ARMY):
       return actions.FUNCTIONS.select_army("select")
 
   ########################
@@ -98,7 +98,8 @@ class ZergAgent(base_agent.BaseAgent):
   ########################
   def step(self, obs, fsm):
     super(ZergAgent, self).step(obs)
-    
+    global _DRONE_GAS
+
     if obs.first():
       player_y, player_x = (obs.observation.feature_minimap.player_relative ==
                             features.PlayerRelative.SELF).nonzero()
@@ -110,55 +111,68 @@ class ZergAgent(base_agent.BaseAgent):
       else:
         self.attack_coordinates = (12, 16)
 
-    #----
-    # S'il n'y a pas de spawning pool
-    #----
+
+    extractors = self.get_units_by_type(obs, units.Zerg.Extractor)
     spawning_pools = self.get_units_by_type(obs, units.Zerg.SpawningPool)
-    if fsm.current == "base":
-      if len(spawning_pools) == 0:
-        fsm.select_spawning_pool()
-
     drones = self.get_units_by_type(obs, units.Zerg.Drone)
-    if fsm.current == "spawning_pool_select_drone":
-      if self.unit_type_is_selected(obs, units.Zerg.Drone):
-        if self.can_do(obs, actions.FUNCTIONS.Build_SpawningPool_screen.id):
-          fsm.create_spawning_pool()
-          return self.build_SpawningPool()
-        else:
-          fsm.init()
 
-      if len(drones) > 0:
-        return self.get_unit(drones)
-    #----
-    # S'il n'y a que un Overlord dans le terrain
-    #----
+    if fsm.current == "base":
+      fsm.select_drone()
+      return actions.FUNCTIONS.no_op()
 
-    #Attaque zerglings simple
+
+    if fsm.current == "selected_drone":
+      if not self.drone_selected:
+        if len(drones) > 0:
+          if self.can_do(obs, _SELECT_IDLE_WORKER): #Drone inactif
+            return actions.FUNCTIONS.select_idle_worker("select")
+          fsm.build_buildings()
+          return self.get_unit(drones)
+
+    if fsm.current == "build":
+      #Création des extracteurs
+      unit_type = obs.observation["feature_screen"][_UNIT_TYPE]
+      vespene_y, vespene_x = (unit_type == units.Neutral.VespeneGeyser).nonzero()
+      if len(extractors) == 0:
+        if self.unit_type_is_selected(obs, units.Zerg.Drone):
+          if self.can_do(obs, _BUILD_EXTRACTOR):
+            x = random.randint(0, 83)
+            y = random.randint(0, 83)
+            
+            self.drone_selected = False
+            fsm.init()
+            return actions.FUNCTIONS.Build_Extractor_screen("now", (x, y))
+      if _DRONE_GAS < 3:
+        if self.unit_type_is_selected(obs, units.Zerg.Drone):
+          if self.can_do(obs, _HARVEST_GATHER_SCREEN):
+            _DRONE_GAS += 1
+            self.drone_selected = False
+            fsm.init()
+            return actions.FUNCTIONS.Harvest_Gather_screen("now", (vespene_x[0], vespene_y[0]))
+
+      #Création du spawningPool
+      if (len(spawning_pools) == 0):
+        if self.unit_type_is_selected(obs, units.Zerg.Drone):
+          if self.can_do(obs, _BUILD_SPAWNINGPOOL):
+            self.drone_selected = False
+            fsm.init()
+            return self.build_SpawningPool()
+
+
+    #Attaque zerglings simple --- TEST
     zerglings = self.get_units_by_type(obs, units.Zerg.Zergling)
     if len(zerglings) >= 20:
       return self.attack_zerglings(obs)
-
-    #Création SpawningPools avec drone
-    #spawning_pools = self.get_units_by_type(obs, units.Zerg.SpawningPool)
-    #if len(spawning_pools) == 0:
-    #  if self.unit_type_is_selected(obs, units.Zerg.Drone):
-    #    if self.can_do(obs, actions.FUNCTIONS.Build_SpawningPool_screen.id):
-    #      return self.build_SpawningPool()
-    #  drones = self.get_units_by_type(obs, units.Zerg.Drone)
-    #  if len(drones) > 0:
-    #    return self.get_unit(drones)
     
-    #Création zerglings & overlord
+    # Création zerglings & overlord -- TEST
     if self.unit_type_is_selected(obs, units.Zerg.Larva):
-      free_supply = (obs.observation.player.food_cap -
-                     obs.observation.player.food_used)
-      if free_supply == 0:
-        if self.can_do(obs, actions.FUNCTIONS.Train_Overlord_quick.id): #Overlord
+      if (obs.observation.player.food_cap - obs.observation.player.food_used) == 0:
+        if self.can_do(obs, _TRAIN_OVERLORD): #Overlord
           return self.train_Overlord()
-      if self.can_do(obs, actions.FUNCTIONS.Train_Zergling_quick.id):   #Zerglings
+      if self.can_do(obs, _TRAIN_ZERGLING):   #Zerglings
         return self.train_Zergling()
     
-    larvas = self.get_units_by_type(obs, units.Zerg.Larva)
+    larvas = self.get_units_by_type(obs, units.Zerg.Larva) #Sélection larves pour les créations & tests
     if len(larvas) > 0:
       return self.get_unit(larvas)
     
@@ -182,8 +196,8 @@ def main(unused_argv):
           
         fsm = Fysom({'initial': {'state': 'base', 'event': 'init'},
               'events': [
-                  {'name': 'select_spawning_pool', 'src': 'base', 'dst': 'spawning_pool_select_drone'},
-                  {'name': 'create_spawning_pool', 'src': 'spawning_pool_select_drone', 'dst': 'base'},
+                  {'name': 'select_drone', 'src': 'base', 'dst': 'selected_drone'},
+                  {'name': 'build_buildings', 'src': 'selected_drone', 'dst': 'build'},
                   {'name': 'init', 'dst': 'base'}]
               })
         
